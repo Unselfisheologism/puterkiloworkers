@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Deploy Puter Worker</title>
+    <script src="https://js.puter.com/v2/"></script>
+</head>
+<body>
+    <button id="signIn">Sign In to Puter</button>
+    <button id="deploy" disabled>Deploy Worker</button>
+    <pre id="output"></pre>
+
+    <script>
+        const output = document.getElementById('output');
+        const signInBtn = document.getElementById('signIn');
+        const deployBtn = document.getElementById('deploy');
+
+        signInBtn.addEventListener('click', async () => {
+            try {
+                const res = await puter.auth.signIn();
+                if (res) {
+                    output.textContent = 'Signed in successfully!';
+                    signInBtn.disabled = true;
+                    deployBtn.disabled = false;
+                }
+            } catch (err) {
+                output.textContent = 'Sign-in failed: ' + err.message;
+            }
+        });
+
+        deployBtn.addEventListener('click', async () => {
+            try {
+                // Read the worker code from worker.js file
+                const response = await fetch('worker.js');
+                const workerCode = await response.text();
+
+                // Deploy the worker (replace 'my-claude-agent' with your desired worker name)
+                const worker = await puter.workers.create({
+                    name: 'my-claude-agent',  // This sets the subdomain: my-claude-agent.puter.work
+                    code: workerCode
+                });
+
+                output.textContent = `Worker deployed! Access your API at: https://${worker.name}.puter.work/v1/chat/completions\nFull worker info: ${JSON.stringify(worker, null, 2)}`;
+            } catch (err) {
+                output.textContent = 'Deployment failed: ' + err.message;
+            }
+        });
+    </script>
+</body>
+</html>
