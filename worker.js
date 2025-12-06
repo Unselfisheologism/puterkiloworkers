@@ -1,14 +1,24 @@
 // worker.js - Puter Worker code for OpenAI-compatible Claude API
+// Note: Puter Workers auto-load Puter.js, so puter.ai.chat() is available.
+
+// Ignore API key (for private use; accept any Bearer token, including dummy "abcdefg")
 router.post('/v1/chat/completions', async ({ request }) => {
   try {
     // Parse request body
     const body = await request.json();
     const { model: clientModel, messages, stream = false, temperature = 0.7, max_tokens } = body;
 
-    // Ignore API key (for private use; accept any Bearer token)
     const authHeader = request.headers.get('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    // For private use: Accept dummy key
+    const token = authHeader.substring(7);
+    if (token !== 'abcdefg') {
+      return new Response(JSON.stringify({ error: { message: 'Invalid API key (use abcdefg)' } }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' }
       });
@@ -39,7 +49,7 @@ router.post('/v1/chat/completions', async ({ request }) => {
     if (!stream) {
       let fullContent = '';
       if (aiResponse?.message?.content?.[0]?.text) {
-        fullContent = aiResponse.message.content[0].text.replace(/^<assistant>\s*/, '').replace(/\s*<\/assistant>$/, '').trim();
+        fullContent = aiResponse.message.content[0].text.replace(/^<assistant>\s*/i, '').replace(/\s*<\/assistant>$/i, '').trim();
       } else if (typeof aiResponse === 'string') {
         fullContent = aiResponse;
       }
@@ -69,13 +79,19 @@ router.post('/v1/chat/completions', async ({ request }) => {
     }
 
     // For streaming: Return SSE in OpenAI format
+    let accumulatedContent = '';  // Accumulate deltas
     const stream = new ReadableStream({
       async start(controller) {
         try {
           let fullId = `chatcmpl-${Date.now()}`;
           let created = Math.floor(Date.now() / 1000);
           for await (const part of aiResponse) {
-            const deltaContent = part?.text?.replace(/^<assistant>\s*/, '').replace(/\s*<\/assistant>$/, '').trim() || '';
+            let deltaContent = '';
+            if (part?.text) {
+              const rawText = part.text.replace(/^<assistant>\s*/i, '').replace(/\s*<\/assistant>$/i, '').trim();
+              deltaContent = rawText;  // Full chunk as delta (Claude streams chunks)
+              accumulatedContent += deltaContent;
+            }
             if (deltaContent) {
               const sseData = `data: ${JSON.stringify({
                 id: fullId,
