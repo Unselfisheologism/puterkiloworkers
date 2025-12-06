@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Deploy Puter Worker</title>
+    <script src="https://js.puter.com/v2/"></script>
+</head>
+<body>
+    <button id="signIn">Sign In to Puter</button>
+    <button id="deploy" disabled>Deploy Worker</button>
+    <pre id="output">Ready to sign in...</pre>
+
+    <script>
+        const output = document.getElementById('output');
+        const signInBtn = document.getElementById('signIn');
+        const deployBtn = document.getElementById('deploy');
+
+        signInBtn.addEventListener('click', async () => {
+            output.textContent = 'Initiating sign-in...';
+            try {
+                // 1. Initiate sign-in. We don't rely on the return value (res) anymore.
+                await puter.auth.signIn();
+                
+                // 2. Explicitly check the user state provided by the SDK after completion.
+                if (puter.auth.user) {
+                    output.textContent = 'Signed in successfully! Ready to deploy.';
+                    signInBtn.disabled = true;
+                    deployBtn.disabled = false;
+                } else {
+                    // This handles cases where the sign-in popup closes but authentication fails silently.
+                    throw new Error("Authentication failed or user object is null.");
+                }
+
+            } catch (err) {
+                // This catches both network errors and the internal SDK error you were seeing.
+                output.textContent = 'Sign-in failed: ' + err.message;
+                signInBtn.disabled = false;
+                deployBtn.disabled = true;
+            }
+        });
+
+        deployBtn.addEventListener('click', async () => {
+            output.textContent = 'Starting deployment process...';
+            try {
+                // Read the worker code from worker.js file (unchanged)
+                const response = await fetch('worker.js');
+                const workerCode = await response.text();
+
+                // Create directory and upload worker.js to Puter FS (unchanged)
+                const workerName = 'my-claude-agent';
+                const dirPath = `/puter/${workerName}`;
+                const filePath = `${dirPath}/worker.js`;
+
+                await puter.fs.mkdir(dirPath);  // Create dir if needed
+                await puter.fs.upload(filePath, new Blob([workerCode], { type: 'text/javascript' }));
+
+                // Deploy the worker using name and filePath (unchanged)
+                const worker = await puter.workers.create(workerName, filePath);
+
+                output.textContent = `✅ Worker deployed successfully!
+Access your API at: https://${workerName}.puter.work/v1/chat/completions
+
+Full worker info: ${JSON.stringify(worker, null, 2)}`;
+            } catch (err) {
+                output.textContent = '❌ Deployment failed: ' + err.message;
+            }
+        });
+    </script>
+</body>
+</html>
