@@ -15,39 +15,95 @@
         const signInBtn = document.getElementById('signIn');
         const deployBtn = document.getElementById('deploy');
 
+        function log(msg) {
+            output.textContent += msg + '\n';
+        }
+
         signInBtn.addEventListener('click', async () => {
             try {
+                log('Initiating sign-in...');
                 const res = await puter.auth.signIn();
                 if (res) {
-                    output.textContent = 'Signed in successfully!';
+                    log('Signed in successfully!');
+                    
+                    // Check for verified email (common cause of perms issues)
+                    const user = await puter.user.get();
+                    if (!user.emailVerified) {
+                        log('WARNING: Email not verified! Verify at puter.com to enable Workers/FS.');
+                    }
+                    
                     signInBtn.disabled = true;
                     deployBtn.disabled = false;
                 }
             } catch (err) {
-                output.textContent = 'Sign-in failed: ' + err.message;
+                log('Sign-in failed: ' + err.message);
             }
         });
 
         deployBtn.addEventListener('click', async () => {
             try {
+                log('Starting deployment...');
+
+                // Request FS write permission if not granted
+                log('Requesting storage write permission...');
+                const permGranted = await puter.perms.request('PERM_WRITE_STORAGE');
+                if (!permGranted) {
+                    throw new Error('Storage write permission denied by user.');
+                }
+                log('Permission granted.');
+
                 // Read the worker code from worker.js file
+                log('Fetching worker.js...');
                 const response = await fetch('worker.js');
                 const workerCode = await response.text();
 
-                // Create directory and upload worker.js to Puter FS
-                const workerName = 'my-claude-agent';
-                const dirPath = `/puter/${workerName}`;
-                const filePath = `${dirPath}/worker.js`;
-
-                await puter.fs.mkdir(dirPath);  // Create dir if needed
-                await puter.fs.upload(filePath, new Blob([workerCode], { type: 'text/javascript' }));
+                // Write directly to root FS path (auto-creates dirs if needed)
+                const filePath = '/worker.js';
+                log(`Writing worker code to ${filePath}...`);
+                await puter.fs.write(filePath, workerCode);
+                log('Worker code uploaded successfully.');
 
                 // Deploy the worker using name and filePath
+                const workerName = 'my-claude-agent';  // Change if desired; must be unique
+                log(`Creating worker "${workerName}"...`);
                 const worker = await puter.workers.create(workerName, filePath);
 
-                output.textContent = `Worker deployed! Access your API at: https://${workerName}.puter.work/v1/chat/completions\nFull worker info: ${JSON.stringify(worker, null, 2)}`;
+                // Wait for propagation (5-30s)
+                log('Deployment successful! Waiting 5s for propagation...');
+                await new Promise(resolve => setTimeout(resolve, 5000));
+
+                const apiUrl = `https://${workerName}.puter.work/v1/chat/completions`;
+                log(`Worker deployed! Access your OpenAI-compatible API at: ${apiUrl}`);
+                log(`Full worker info: ${JSON.stringify(worker, null, 2)}`);
+                
+                // Quick test
+                log('Testing endpoint...');
+                try {
+                    const testRes = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': 'Bearer abcdefg',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            model: 'gpt-4',
+                            messages: [{ role: 'user', content: 'Say hello from Claude!' }],
+                            stream: false
+                        })
+                    });
+                    const testData = await testRes.json();
+                    log(`Test response: ${JSON.stringify(testData, null, 2)}`);
+                } catch (testErr) {
+                    log(`Test failed (normal if still propagating): ${testErr.message}`);
+                }
             } catch (err) {
-                output.textContent = 'Deployment failed: ' + err.message;
+                log('Deployment failed: ' + err.message);
+                // Distinguish FS vs. worker errors
+                if (err.message.includes('fs') || err.message.includes('storage')) {
+                    log('Tip: Ensure email is verified and grant FS permissions.');
+                } else if (err.message.includes('worker')) {
+                    log('Tip: Worker name may be taken; try a unique one like "my-claude-' + Date.now() + '".');
+                }
             }
         });
     </script>
