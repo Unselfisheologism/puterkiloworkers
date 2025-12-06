@@ -34,13 +34,18 @@
                 const response = await fetch('worker.js');
                 const workerCode = await response.text();
 
-                // Deploy the worker (replace 'my-claude-agent' with your desired worker name)
-                const worker = await puter.workers.create({
-                    name: 'my-claude-agent',  // This sets the subdomain: my-claude-agent.puter.work
-                    code: workerCode
-                });
+                // Create directory and upload worker.js to Puter FS
+                const workerName = 'my-claude-agent';
+                const dirPath = `/puter/${workerName}`;
+                const filePath = `${dirPath}/worker.js`;
 
-                output.textContent = `Worker deployed! Access your API at: https://${worker.name}.puter.work/v1/chat/completions\nFull worker info: ${JSON.stringify(worker, null, 2)}`;
+                await puter.fs.mkdir(dirPath);  // Create dir if needed
+                await puter.fs.upload(filePath, new Blob([workerCode], { type: 'text/javascript' }));
+
+                // Deploy the worker using name and filePath
+                const worker = await puter.workers.create(workerName, filePath);
+
+                output.textContent = `Worker deployed! Access your API at: https://${workerName}.puter.work/v1/chat/completions\nFull worker info: ${JSON.stringify(worker, null, 2)}`;
             } catch (err) {
                 output.textContent = 'Deployment failed: ' + err.message;
             }
