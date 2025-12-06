@@ -5,7 +5,7 @@ router.post('/v1/chat/completions', async ({ request }) => {
     const body = await request.json();
     const { model: clientModel, messages, stream = false, temperature = 0.7, max_tokens } = body;
 
-    // Ignore API key (for private use; always "authorize")
+    // Ignore API key (for private use; accept any Bearer token)
     const authHeader = request.headers.get('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), {
@@ -22,12 +22,14 @@ router.post('/v1/chat/completions', async ({ request }) => {
       });
     }
 
-    // Map OpenAI messages to Claude prompt (concatenate for simplicity; enhance for multi-turn if needed)
-    const prompt = messages.map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`).join('\n');
+    // Map OpenAI messages to Claude prompt (XML-style for better multi-turn support)
+    const prompt = '<conversation>\n' + 
+      messages.map(msg => `<${msg.role}>\n${msg.content}\n</${msg.role}>`).join('\n') + 
+      '\n</conversation>\n<assistant>\n';
 
-    // Call Puter AI with Claude Opus 4.5 (override client model for now; can add support for others)
+    // Call Puter AI with Claude Opus 4.5
     const aiResponse = await puter.ai.chat(prompt, {
-      model: 'claude-opus-4-5',  // Fixed to your requested model
+      model: 'claude-opus-4-5',  // Fixed to requested model
       stream: stream,
       temperature: temperature,
       max_tokens: max_tokens
@@ -36,10 +38,10 @@ router.post('/v1/chat/completions', async ({ request }) => {
     // For non-streaming: Get full response
     if (!stream) {
       let fullContent = '';
-      if (aiResponse.message && aiResponse.message.content && aiResponse.message.content[0]) {
-        fullContent = aiResponse.message.content[0].text;
+      if (aiResponse?.message?.content?.[0]?.text) {
+        fullContent = aiResponse.message.content[0].text.replace(/^<assistant>\s*/, '').replace(/\s*<\/assistant>$/, '').trim();
       } else if (typeof aiResponse === 'string') {
-        fullContent = aiResponse;  // Fallback if direct string
+        fullContent = aiResponse;
       }
 
       const openaiResponse = {
@@ -57,7 +59,7 @@ router.post('/v1/chat/completions', async ({ request }) => {
             finish_reason: 'stop'
           }
         ],
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }  // Placeholder; enhance with real counts if needed
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }  // Placeholder
       };
 
       return new Response(JSON.stringify(openaiResponse), {
@@ -66,18 +68,19 @@ router.post('/v1/chat/completions', async ({ request }) => {
       });
     }
 
-    // For streaming: Return a streaming response (OpenAI format: SSE)
-    // Note: Puter.ai.chat stream yields parts with .text; we map to OpenAI delta format
+    // For streaming: Return SSE in OpenAI format
     const stream = new ReadableStream({
       async start(controller) {
         try {
+          let fullId = `chatcmpl-${Date.now()}`;
+          let created = Math.floor(Date.now() / 1000);
           for await (const part of aiResponse) {
-            const deltaContent = part?.text || '';
+            const deltaContent = part?.text?.replace(/^<assistant>\s*/, '').replace(/\s*<\/assistant>$/, '').trim() || '';
             if (deltaContent) {
               const sseData = `data: ${JSON.stringify({
-                id: `chatcmpl-${Date.now()}`,
+                id: fullId,
                 object: 'chat.completion.chunk',
-                created: Math.floor(Date.now() / 1000),
+                created: created,
                 model: 'claude-opus-4-5',
                 choices: [{
                   index: 0,
@@ -90,9 +93,9 @@ router.post('/v1/chat/completions', async ({ request }) => {
           }
           // End stream
           const endData = `data: ${JSON.stringify({
-            id: `chatcmpl-${Date.now()}`,
+            id: fullId,
             object: 'chat.completion.chunk',
-            created: Math.floor(Date.now() / 1000),
+            created: created,
             model: 'claude-opus-4-5',
             choices: [{
               index: 0,
